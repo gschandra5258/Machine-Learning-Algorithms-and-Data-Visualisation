@@ -1,0 +1,291 @@
+---
+title: "Windspeed_Prediction_code"
+output: html_notebook
+---
+
+```{r}
+#Get Directory
+getwd()
+
+```
+
+
+```{r}
+#Setting the directory to read the csv file
+setwd("E:/DM&ML/Project/Dataset-1")
+
+#Using the necessary libraries
+#install.packages('tidyverse') 
+library(tidyverse) # metapackage with lots of useful functions
+library(dplyr, warn.conflicts = FALSE)
+library(ggplot2)
+#install.packages('quantmod')
+#install.packages('e1071')
+#install.packages('kernlab')
+#install.packages('caret')
+library(caret)
+library(kernlab)
+library('quantmod')
+library('e1071') #SVM package
+
+```
+
+```{r}
+#Importing the data into R
+windspeed3pm <- read.csv("E:/DM&ML/Project/Dataset-1/weatherAUS.csv", header = TRUE)
+```
+
+
+```{r}
+#To view the loaded data
+#View(windspeed3pm)
+head(windspeed3pm)
+
+```
+```{r}
+#Checking the total number of records and columns
+dim(windspeed3pm)
+```
+
+```{r}
+#Visualising the missing values
+missing.values <- windspeed3pm %>%
+    gather(key = "key", value = "val") %>%
+    mutate(is.missing = is.na(val)) %>%
+    group_by(key, is.missing) %>%
+    summarise(num.missing = n()) %>%
+    filter(is.missing==T) %>%
+    select(-is.missing) %>%
+    arrange(desc(num.missing))
+missing.values %>%
+  ggplot() +
+    geom_bar(aes(x=key, y=num.missing), stat = 'identity') +
+    labs(x='variable', y="number of missing values", title='Number of missing values') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+#Factorising some of the columns which are having NA values
+data <- windspeed3pm %>%
+  mutate_at(vars(Location, WindGustDir, WindDir9am, WindDir3pm, RainToday, RainTomorrow, Cloud9am, Cloud3pm), as.factor)
+data
+```
+
+
+```{r}
+#From the output of the head function we could see that there are many NA values in all the columns. Lets check the percentage of missingvalues
+windspeed3pm_naper <- data %>% summarise_each(list(~ sum(is.na(.)) / length(.) * 100))
+windspeed3pm_naper
+```
+
+
+```{r}
+#From the above output we could see that there are columns which are more percentage, lets first drop some unnecessary columns from the data
+windspeed3pm_2 <- data %>% select(-Evaporation, -WindGustDir, -WindDir9am, -WindDir3pm, -Sunshine, -Cloud9am, -Cloud3pm, -Date, -Location, -RISK_MM, -RainTomorrow, -RainToday) 
+windspeed3pm_naper <- windspeed3pm_2 %>% summarise_each(list(~ sum(is.na(.)) / length(.) * 100))
+windspeed3pm_naper
+```
+
+
+```{r}
+#From the above percentages we could see that after removing the columns which are not needed for this analysis, there are still some columns that we need to replace all the NAs with mean or median of thier respective columns
+#checking the class of the columns
+sapply(windspeed3pm_2, class)
+```
+
+
+```{r}
+#After removing we have 1 DV and 11 IVs
+#Lets take the mean and median of all columns having NA values and replace with NA
+windspeed_mean <- mean(windspeed3pm_2$MinTemp, na.rm = T)
+windspeed_mean
+windspeed_median <- median(windspeed3pm_2$MinTemp, na.rm = T)
+windspeed_median
+windspeed_mean <- mean(windspeed3pm_2$MaxTemp, na.rm = T)
+windspeed_mean
+windspeed_median <- median(windspeed3pm_2$MaxTemp, na.rm = T)
+windspeed_median
+```
+
+
+```{r}
+#We can see above the mean and medians of the columns, lets replace all the columns NA values using for loop
+for(i in 1:12){
+  windspeed3pm_2[is.na(windspeed3pm_2[,i]), i] <- mean(windspeed3pm_2[,i], na.rm = TRUE)
+}
+```
+
+
+```{r}
+#Checking NA values count
+colSums(is.na(windspeed3pm_2)) # 0
+```
+
+
+```{r}
+#roundup
+windspeed3pm_2$Rainfall <- round(windspeed3pm_2$Rainfall, digits = 2)
+windspeed3pm_2$WindGustSpeed <- round(windspeed3pm_2$WindGustSpeed, digits = 2)
+windspeed3pm_2$WindSpeed9am <- round(windspeed3pm_2$WindSpeed9am, digits = 2)
+windspeed3pm_2$WindSpeed3pm <- round(windspeed3pm_2$WindSpeed3pm, digits = 2)
+sapply(windspeed3pm_2, class)
+head(windspeed3pm_2)
+```
+```{r}
+#Visualisations
+#Plotting the final dataframe
+plot(WindSpeed3pm~., data = windspeed3pm_2)
+```
+```{r}
+#Correlation between the Quantitative variables
+#windspeed3pm_2[,1:12]<-scale(windspeed3pm_2[,1:12])
+sara2 <- round(cor(x=windspeed3pm_2[,c("MinTemp","MaxTemp","WindGustSpeed", "WindSpeed9am","Humidity9am","Humidity3pm","Pressure9am","Pressure3pm","Temp9am","Temp3pm")],y=windspeed3pm_2[,c("MinTemp","MaxTemp","WindGustSpeed", "WindSpeed9am","Humidity9am","Humidity3pm","Pressure9am","Pressure3pm","Temp9am","Temp3pm")]), 2) 
+corrplot(sara2,method = "pie")
+```
+
+
+```{r}
+#From the above plot we could see that some of the variables are highly correlated. we need to remove some columns
+#Since both Pressure9pm and Pressure3pm are highly correlated, we will keep Pressure9pm.
+#The variables MaxTemp, Temp3pm, Temp9am, MinTemp are also highly correlated, so we will keep only MaxTemp
+windspeed3pm_final <- windspeed3pm_2 %>% select(-Pressure3pm, -Temp3pm, -Temp9am, -MinTemp)
+head(windspeed3pm_final)
+```
+
+
+```{r}
+#Verifying the outliers in the final data and removing with upper fence
+boxplot(windspeed3pm_final)
+summary(windspeed3pm_final$MaxTemp)
+IQR_MaxTemp <- 28.20 - 17.90
+IQR_MaxTemp #10.3
+Upfen_MaxTemp <- 28.20+1.5*IQR_MaxTemp
+Upfen_MaxTemp #43.65
+summary(windspeed3pm_final$Rainfall)
+IQR_Rainfall <- 0.80-0.00
+IQR_Rainfall #0.8
+Upfen_Rainfall <- 0.80+1.5*IQR_Rainfall
+Upfen_Rainfall #2
+summary(windspeed3pm_final$WindGustSpeed)
+IQR_WindGustSpeed <- 46.00-31.00
+IQR_WindGustSpeed #15
+Upfen_WindGustSpeed <- 46.00+1.5*IQR_WindGustSpeed
+Upfen_WindGustSpeed #68.5
+summary(windspeed3pm_final$WindSpeed9am)
+IQR_WindSpeed9am <- 19-7
+IQR_WindSpeed9am #12
+Upfen_WindSpeed9am <- 19+1.5*IQR_WindSpeed9am
+Upfen_WindSpeed9am #37
+summary(windspeed3pm_final$WindSpeed3pm)
+IQR_WindSpeed3pm <- 24.00 - 13.00
+IQR_WindSpeed3pm #11
+Upfen_WindSpeed3pm <- 24+1.5*IQR_WindSpeed3pm
+Upfen_WindSpeed3pm #40.5
+summary(windspeed3pm_final$Humidity9am)
+IQR_Humidity9am <- 83.00 - 57.00
+IQR_Humidity9am #26
+Upfen_Humidity9am <- 83.00+1.5*IQR_Humidity9am
+Upfen_Humidity9am #122
+summary(windspeed3pm_final$Humidity3pm)
+IQR_Humidity3pm <- 65.00 - 37.00
+IQR_Humidity3pm #28
+Upfen_Humidity3pm <- 65.00+1.5*IQR_Humidity3pm
+Upfen_Humidity3pm #107
+summary(windspeed3pm_final$Pressure9am)
+IQR_Pressure9am <- 1021.8 - 1013.5
+IQR_Pressure9am #8.3
+Upfen_Pressure9am <- 1021.8+1.5*IQR_Pressure9am
+Upfen_Pressure9am #1034.25
+windspeed3pm_final_2 <- subset(windspeed3pm_final, MaxTemp<=43.65 & Rainfall<=2 & WindGustSpeed<=68.5 & WindSpeed9am<=37 & WindSpeed3pm<=40.5 & Humidity9am<=122 & Humidity3pm<=107 & Pressure9am<=1034.25)
+boxplot(windspeed3pm_final_2)
+dim(windspeed3pm_final2)
+```
+
+
+```{r}
+#Verifying the outliers in the final data and removing with lower fence
+summary(windspeed3pm_final_2$MaxTemp)
+IQR_MaxTemp <- 28.90 - 18.80
+IQR_MaxTemp #10.1
+Lofen_MaxTemp <- 28.90-1.5*IQR_MaxTemp
+Lofen_MaxTemp #13.75
+summary(windspeed3pm_final_2$Humidity9am)
+IQR_Humidity9am <- 79.00 - 55.00
+IQR_Humidity9am #24
+Lofen_Humidity9am <- 79.00-1.5*IQR_Humidity9am
+Lofen_Humidity9am #43
+summary(windspeed3pm_final_2$Pressure9am)
+IQR_Pressure9am <- 1022.3 - 1014.5
+IQR_Pressure9am #7.8
+Lofen_Pressure9am <- 1022.3-1.5*IQR_Pressure9am
+Lofen_Pressure9am #1010.6
+
+windspeed3pm_final2 <- subset(windspeed3pm_final_2, MaxTemp>=13.75 & Humidity9am>=43 & Pressure9am>=1010.6)
+boxplot(windspeed3pm_final2)
+```
+
+
+```{r}
+#datatype of the columns
+sapply(windspeed3pm_final2, class)
+
+#Splitting the final data into train and test datas
+set.seed(123) #To preserve the results every single time: without this, the data values split up 70/30% will always be different
+indices <- sample(nrow(windspeed3pm_final2), 0.70 * nrow(windspeed3pm_final2))
+train_data <- windspeed3pm_final2[indices, ]
+test_data <- windspeed3pm_final2[-indices, ]
+dim(train_data)
+dim(test_data)
+```
+
+
+```{r}
+#Apllying Multiple Linear Regression Algorithm on the final data
+windspeed3pm_ml <- lm(WindSpeed3pm~., data=train_data)
+summary(windspeed3pm_ml) #R-squared:  0.4226
+str(windspeed3pm_ml)
+plot(windspeed3pm_ml)
+windspeed3pm_ml_res <- resid(windspeed3pm_ml)
+plot(windspeed3pm_ml_res)
+```
+
+
+```{r}
+#Prediction and comparing the actual values vs model created values of DV 
+windspeed3pm_pred <- predict(windspeed3pm_ml, test_data)
+results <- cbind(windspeed3pm_pred, test_data$WindSpeed3pm)
+colnames(results) <- c("Preicted", "Actual")
+results <- as.data.frame(results)
+
+ggplot(results, aes(x = windspeed3pm_pred, y = Actual)) + geom_point()+geom_smooth(color = 'blue')+ ggtitle("Predicted Values Vs Actual Values") + theme(plot.title = element_text(hjust = 0.5, size = 30, face = "bold"))
+```
+
+
+```{r}
+#RMSE value of Linear Regression model
+rmsesvm = RMSE(windspeed3pm_pred, test_data$WindSpeed3pm)
+rmsesvm
+```
+
+```{r}
+#Support Vector Machine
+windspeed3pm_svm <- svm(WindSpeed3pm~., data=train_data, kernel='linear', cost=1.0, epsilon=0.1)
+summary(windspeed3pm_svm)
+```
+
+```{r}
+#Prediction and comparing the actual values vs model created values of DV
+windspeed3pm_pred2 <- predict(windspeed3pm_svm, test_data)
+results <- cbind(windspeed3pm_pred2, test_data$WindSpeed3pm)
+colnames(results) <- c("Preicted", "Actual")
+results <- as.data.frame(results)
+head(results)
+ggplot(results, aes(x = windspeed3pm_pred2, y = Actual)) + geom_point()+geom_smooth(color = 'blue')+ ggtitle("Predicted Values Vs Actual Values") +
+  theme(plot.title = element_text(hjust = 0.5, size = 30, face = "bold"))
+```
+
+```{r}
+rmsesvm = RMSE(windspeed3pm_pred2, test_data$WindSpeed3pm)
+rmsesvm
+```

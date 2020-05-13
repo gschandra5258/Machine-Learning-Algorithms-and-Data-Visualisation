@@ -1,0 +1,386 @@
+---
+title: "Hotel_Booking"
+output: html_notebook
+---
+
+
+```{r}
+#Get Directory
+getwd()
+```
+
+
+```{r}
+#Setting the directory to read the csv file
+setwd("E:/DM&ML/Project/Dataset-2")
+```
+
+
+```{r}
+#Using the necessary libraries
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(scales)
+library(tidyverse)
+library(readr)
+#install.packages('naivebayes')
+library(zeallot)
+library(countrycode)
+library(ISLR)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(naivebayes)
+library(corrplot)
+```
+
+
+```{r}
+#Importing the data into R
+hotelbooking <- read.csv("E:/DM&ML/Project/Dataset-2/hotel_bookings.csv", header = TRUE)
+```
+
+
+```{r}
+#To view the loaded data
+#View(hotelbooking)
+head(hotelbooking)
+```
+
+
+```{r}
+#Checking the total number of records and columns
+dim(hotelbooking)
+#Checking the NA values
+colSums(is.na(hotelbooking)) # 4
+```
+
+
+```{r}
+#From the output above we could see that there are many NA values in all the columns. Lets check the percentage of missingvalues
+hotelbooking_per <- hotelbooking %>% summarise_each(list(~ sum(is.na(.)) / length(.) * 100))
+hotelbooking_per
+```
+
+
+```{r}
+#Visualising the NA values
+missing.values <- hotelbooking %>%
+  gather(key = "key", value = "val") %>%
+  mutate(is.missing = is.na(val)) %>%
+  group_by(key, is.missing) %>%
+  summarise(num.missing = n()) %>%
+  filter(is.missing==T) %>%
+  select(-is.missing) %>%
+  arrange(desc(num.missing))
+missing.values %>%
+  ggplot() +
+  geom_bar(aes(x=key, y=num.missing), stat = 'identity') +
+  labs(x='variable', y="number of missing values", title='Number of missing values') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+#We could see in the column children we have 4 NAs
+#Lets replace those 4 with mean or median of that column
+hotelbookingmean <- mean(hotelbooking$children, na.rm = T)
+hotelbookingmean #0.1038899
+hotelbookingmedian <- median(hotelbooking$children, na.rm = T)
+hotelbookingmedian
+
+#Replacing the NA with mean value 
+hotelbooking$children[which(is.na(hotelbooking$children))] <- mean(hotelbooking$children, na.rm = TRUE)
+colSums(is.na(hotelbooking)) #0
+```
+
+
+```{r}
+#Removing the columns which are not necessary and after the visualisation will finalise the columns
+hotelbooking <- hotelbooking %>% select(-meal, -distribution_channel, -agent, -company, -required_car_parking_spaces, -reservation_status_date) 
+```
+
+
+```{r}
+#Converting all character columns into Factors
+sapply(hotelbooking, class)
+
+hotelbooking[sapply(hotelbooking, is.character)] <- lapply(hotelbooking[sapply(hotelbooking, is.character)], as.factor)
+str(hotelbooking)
+summary(hotelbooking)
+```
+
+
+```{r}
+#Checking the toatl bookings of City hotel and Resort hotel
+table(hotelbooking$hotel)
+
+#Checking the distribution of cancellation based on the hotel type
+table(hotelbooking$iscanceled, hotelbooking$hotel)
+ggplot(data = hotelbooking,
+       aes(
+         x = hotel,
+         y = prop.table(stat(count)),
+         fill = factor(iscanceled),
+         label = scales::percent(prop.table(stat(count)))
+       )) +
+  geom_bar(position = position_dodge()) +
+  geom_text(
+    stat = "count",
+    position = position_dodge(.9),
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Cancellation Status by Hotel Type",
+       x = "Hotel Type",
+       y = "Count") +
+  theme_classic() +
+  scale_fill_discrete(
+    name = "Booking Status",
+    breaks = c("0", "1"),
+    labels = c("Cancelled", "Not Cancelled")
+  )
+```
+
+
+```{r}
+#Checking the cancellation ratio by lead time
+ggplot(data = hotelbooking, aes(
+  x = hotel,
+  y = lead_time,
+  fill = factor(iscanceled)
+)) +
+  geom_boxplot(position = position_dodge()) +
+  labs(
+    title = 'Cancellation By Hotel Type',
+    subtitle = 'Based on Lead Time',
+    x = 'hotel Type',
+    y = 'Lead Time (Days)'
+  ) +
+  scale_fill_discrete(
+    name = 'Booking Status',
+    breaks = c("0", "1"),
+    labels = c('Cancelled', 'Not Cancelled')
+  ) + theme_dark()
+```
+
+```{r}
+#Checking the total cancelations and booking count with respective of month
+hotelbooking$arrival_date_month <-
+  factor(hotelbooking$arrival_date_month, levels = month.name)
+
+ggplot(hotelbooking, aes(arrival_date_month, fill = factor(iscanceled))) +
+  geom_bar() + geom_text(stat = "count", aes(label = ..count..), hjust = 1) +
+  coord_flip() + scale_fill_discrete(
+    name = "Booking Status",
+    breaks = c("0", "1"),
+    label = c("Cancelled", "Not Cancelled")
+  ) +
+  labs(title = "Booking Status by Month",
+       x = "Month",
+       y = "Count") + theme_dark()
+
+```
+
+
+```{r}
+# Total Stay Duration
+ggplot(hotelbooking, aes(stays_in_weekend_nights + stays_in_week_nights)) + 
+  geom_density(col = "red") +facet_wrap(~hotel) + theme_bw()
+
+#Hotel Preference by the customer type
+ggplot(hotelbooking, aes(customer_type, fill = hotel)) + 
+  geom_bar(stat = "count", position = position_dodge()) + 
+  labs(title = "Hotel Preference by Customer Type",
+       x = "Customer Type",
+       y = "Count") + theme_dark()
+```
+
+
+```{r}
+# Does the hotel charged differently based on the customer type
+ggplot(hotelbooking, aes(x = customer_type, y = adr, fill = hotel)) + 
+  geom_boxplot(position = position_dodge()) + 
+  labs(title = "Price Charged by Hotel Type",
+       subtitle = "for Customer Type",
+       x = "Customer Type",
+       y = "Price per night(in Euro)") + theme_classic()
+```
+
+
+```{r}
+#Removing the columns which are not useful after EDA
+hotelbooking <- hotelbooking %>% select(-hotel, -arrival_date_year, -arrival_date_month, -arrival_date_week_number, -stays_in_weekend_nights, -babies, -country, 
+                                        -previous_bookings_not_canceled,	-reserved_room_type,	-assigned_room_type, -reservation_status, -days_in_waiting_list) 
+
+```
+
+
+```{r}
+#Removing Outliers
+boxplot(hotelbooking)
+summary(hotelbooking$lead_time)
+IQR_le_t <- 151-17
+IQR_le_t #134
+Upfen_le_t <- 151+1.5*IQR_le_t
+Upfen_le_t #352
+summary(hotelbooking$adr)
+IQR_adr <- 126.90 - 70
+IQR_adr #56.9
+Upfen_adr <- 126.90+1.5*IQR_adr
+Upfen_adr #212.25
+hotelbooking <- subset(hotelbooking, lead_time<=352, adr<=212.25)
+```
+
+
+```{r}
+#Correlation between the Quantitative variables
+library(corrplot)
+#windspeed3pm_2[,1:12]<-scale(windspeed3pm_2[,1:12])
+sara2 <- round(cor(x=hotelbooking[,c("lead_time","adr","arrival_date_day_of_month","stays_in_week_nights","adults","children","is_repeated_guest","previous_cancellations","booking_changes","total_of_special_requests")],#)],
+                   y=hotelbooking[,c("lead_time","adr","arrival_date_day_of_month","stays_in_week_nights","adults","children","is_repeated_guest","previous_cancellations","booking_changes","total_of_special_requests")]), 2)
+corrplot(sara2,method = "pie")
+```
+
+
+```{r}
+#datatype of the columns
+sapply(hotelbooking, class)
+```
+
+
+```{r}
+#Splitting the final data into train and test datas
+set.seed(123) #To preserve the results every single time: without this, the data values split up 70/30% will always be different
+indices <- sample(nrow(hotelbooking), 0.70 * nrow(hotelbooking))
+train <- hotelbooking[indices, ]
+test <- hotelbooking[-indices, ]
+```
+
+
+```{r}
+#Decission Tree algorithm
+table(train$iscanceled)
+prop.table(table(train$iscanceled))
+summary(train)
+tree1 <- rpart(iscanceled ~ ., data=train)
+rpart.plot(tree1,nn=TRUE)
+```
+
+
+```{r}
+summary(tree1)
+print(tree1)
+```
+
+
+```{r}
+#Prediction
+tree1_predict <- predict(object=tree1, newdata = test)
+summary(tree1_predict)
+```
+
+
+```{r}
+#Confusion matrix
+range(tree1_predict)  
+gar <- table(test$iscanceled, tree1_predict>0.5) #Threshold
+
+```
+
+
+```{r}
+#Precision, Recall and Kappa
+n1 = sum(gar)# number of instances
+diag1 = diag(gar) # number of correctly classified instances per class 
+rowsums1 = apply(gar, 1, sum) # number of instances per class
+colsums1 = apply(gar, 2, sum) # number of predictions per class
+p1 = rowsums1 / n1 # distribution of instances over the actual classes
+q1 = colsums1 / n1 # distribution of instances over the predicted classes
+accuracy1 = sum(diag1) / n1 
+accuracy1
+precision1 = diag1 / colsums1 
+recall1 = diag1 / rowsums1
+f2 = 2 * precision1 * recall1 / (precision1 + recall1)
+data.frame(precision1, recall1, f2)
+expAccuracy1 = sum(p1*q1)
+kappa1 = (accuracy1 - expAccuracy1) / (1 - expAccuracy1)
+kappa1 #0.5198457
+```
+
+
+```{r}
+TP <- gar[1,1]
+FP <- gar[2,1]
+FN <- gar[1,2]
+TN <- gar[2,2]
+#Accuracy <- (TP+TN)/(TP+TN+FN+FP)
+#Accuracy 
+Error <- (FP+FN)/(TP+TN+FN+FP)
+Error #0.2305402
+sensitivity <- TP/(TP+FN)
+sensitivity #0.9213695
+specificity <- TN/(TN+FP)
+specificity #0.5629924
+#Precision <- TP/(TP+FP)
+#Precision #0.7413058
+#False positive rate
+false_positive_rate <- FP/(TN+FP)
+false_positive_rate #0.4370076
+df <- data.frame(accuracy1, kappa1, sensitivity, specificity, precision1, recall1 )
+df
+```
+
+
+```{r}
+par(pty = 's')
+ROC <- roc(test$iscanceled , tree1_predict, plot = TRUE, legacy.axes = TRUE,
+           percent = TRUE, 
+           col = "blue", lwd = 4, main = "ROC curve of model", print.auc=TRUE)
+```
+
+
+```{r}
+#Navie Bayes
+#Converting all the integer variables into factor variables
+hotelbooking$iscanceled <- as.factor(hotelbooking$iscanceled)
+hotelbooking$lead_time <- as.factor(hotelbooking$lead_time)
+hotelbooking$arrival_date_day_of_month <- as.factor(hotelbooking$arrival_date_day_of_month)
+hotelbooking$stays_in_week_nights <- as.factor(hotelbooking$stays_in_week_nights)
+hotelbooking$adults <- as.factor(hotelbooking$adults)
+hotelbooking$is_repeated_guest <- as.factor(hotelbooking$is_repeated_guest)
+hotelbooking$previous_cancellations <- as.factor(hotelbooking$previous_cancellations)
+hotelbooking$booking_changes<- as.factor(hotelbooking$booking_changes)
+hotelbooking$total_of_special_requests <- as.factor(hotelbooking$total_of_special_requests)
+```
+
+
+```{r}
+#Splitting the final data into train and test datas
+set.seed(123) #To preserve the results every single time: without this, the data values split up 70/30% will always be different
+indices <- sample(nrow(hotelbooking), 0.70 * nrow(hotelbooking))
+train <- hotelbooking[indices, ]
+test <- hotelbooking[-indices, ]
+```
+
+
+```{r}
+#Algorithm
+hotelbooking_navie <- naive_bayes(iscanceled ~ ., data = train) 
+plot(hotelbooking_navie)
+```
+
+
+```{r}
+#Predict & Accuracy 
+pre <- predict(hotelbooking_navie, test)
+```
+
+
+```{r}
+#Confusion Matrix
+confusionMatrix(table(pre, test$iscanceled))
+
+```
